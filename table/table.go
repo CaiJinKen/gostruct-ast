@@ -420,7 +420,7 @@ func (t *Table) GenCode() (data []byte) {
 	name.Obj = obj
 
 	file := &ast.File{
-		Name: &ast.Ident{Name: "model"},
+		Name: &ast.Ident{Name: t.PkgName},
 		Scope: &ast.Scope{
 			Objects: map[string]*ast.Object{t.Name: obj},
 		},
