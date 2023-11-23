@@ -383,6 +383,8 @@ func (t *Table) GenCode() (data []byte) {
 		}
 	}
 
+	var paths []*ast.BasicLit
+	impMap := make(map[string]bool)
 	fieldList := &ast.FieldList{}
 	for _, v := range t.Fields {
 		var (
@@ -404,6 +406,13 @@ func (t *Table) GenCode() (data []byte) {
 		}
 
 		fieldList.List = append(fieldList.List, field)
+
+		// import
+		if v.Type.name == "time.Time" && !impMap[v.Type.name] {
+			imp := &ast.BasicLit{Kind: token.STRING, Value: "\"time\""}
+			paths = append(paths, imp)
+			impMap[v.Type.name] = true
+		}
 	}
 
 	obj := &ast.Object{
@@ -436,6 +445,16 @@ func (t *Table) GenCode() (data []byte) {
 				},
 			},
 		},
+	}
+
+	for _, path := range paths {
+		file.Decls = append([]ast.Decl{
+			&ast.GenDecl{
+				Tok:   token.IMPORT,
+				Specs: []ast.Spec{&ast.ImportSpec{Path: path}},
+			},
+		}, file.Decls...)
+		file.Imports = append(file.Imports, &ast.ImportSpec{Path: path})
 	}
 
 	// tableName func
