@@ -83,9 +83,27 @@ type Table struct {
 
 type Index struct {
 	Fields  []string
-	Type    int
+	Type    IndexType
 	RawName string
 	Comment string
+}
+
+type IndexType int
+
+const (
+	_ IndexType = iota
+	Normal
+	Unique
+)
+
+func (t IndexType) Name() string {
+	switch t {
+	case Normal:
+		return "index"
+	case Unique:
+		return "uniqueIndex"
+	}
+	return ""
 }
 
 func newTable() *Table {
@@ -255,7 +273,7 @@ func (t *Table) parseUniqueIndex(line []byte) {
 	}
 	idx := &Index{
 		Fields:  nil,
-		Type:    2,
+		Type:    Unique,
 		RawName: string(trim(contents[2])),
 		Comment: "",
 	}
@@ -285,7 +303,7 @@ func (t *Table) parseIndex(line []byte) {
 	}
 	idx := &Index{
 		Fields:  nil,
-		Type:    1,
+		Type:    Normal,
 		RawName: string(trim(contents[1])),
 		Comment: "",
 	}
@@ -433,34 +451,35 @@ func (t *Table) GenCode() (data []byte) {
 		Scope: &ast.Scope{
 			Objects: map[string]*ast.Object{t.Name: obj},
 		},
-		Decls: []ast.Decl{
-			&ast.GenDecl{
-				Doc: commentGroup,
-				Tok: token.TYPE,
-				Specs: []ast.Spec{
-					&ast.TypeSpec{
-						Name: name,
-						Type: &ast.StructType{Fields: fieldList},
-					},
-				},
-			},
-		},
+		Decls: []ast.Decl{},
 	}
 
+	// add import
 	for _, path := range paths {
-		file.Decls = append([]ast.Decl{
+		file.Decls = append(file.Decls,
 			&ast.GenDecl{
 				Tok:   token.IMPORT,
 				Specs: []ast.Spec{&ast.ImportSpec{Path: path}},
-			},
-		}, file.Decls...)
+			})
 		file.Imports = append(file.Imports, &ast.ImportSpec{Path: path})
 	}
 
+	// add var type
+	file.Decls = append(file.Decls, &ast.GenDecl{
+		Doc: commentGroup,
+		Tok: token.TYPE,
+		Specs: []ast.Spec{
+			&ast.TypeSpec{
+				Name: name,
+				Type: &ast.StructType{Fields: fieldList},
+			},
+		},
+	})
+
 	// tableName func
-	reciverName := strings.Split(t.RawName, "")[0]
+	receiverName := strings.Split(t.RawName, "")[0]
 	ident := &ast.Ident{
-		Name: reciverName,
+		Name: receiverName,
 		// Obj:  reciverObj,
 	}
 
@@ -468,7 +487,7 @@ func (t *Table) GenCode() (data []byte) {
 		Name: t.Name,
 	}
 
-	reciverTypeObj := &ast.Object{
+	receiverTypeObj := &ast.Object{
 		Name: t.Name,
 		Decl: &ast.TypeSpec{
 			Name: tIdent,
@@ -480,29 +499,30 @@ func (t *Table) GenCode() (data []byte) {
 		},
 	}
 
-	tIdent.Obj = reciverTypeObj
+	tIdent.Obj = receiverTypeObj
 
-	reciverObj := &ast.Object{
-		Name: reciverName,
+	receiverObj := &ast.Object{
+		Name: receiverName,
 		Decl: &ast.Field{
 			Names: []*ast.Ident{ident},
 			Type: &ast.StarExpr{
 				X: &ast.Ident{
 					Name: t.Name,
-					Obj:  reciverTypeObj,
+					Obj:  receiverTypeObj,
 				},
 			},
 		},
 	}
 
-	ident.Obj = reciverObj
+	ident.Obj = receiverObj
 
+	// add func
 	file.Decls = append(file.Decls, &ast.FuncDecl{
 		Recv: &ast.FieldList{
 			List: []*ast.Field{
 				{
 					Names: []*ast.Ident{ident},
-					Type:  &ast.StarExpr{X: &ast.Ident{Name: t.Name, Obj: reciverTypeObj}},
+					Type:  &ast.StarExpr{X: &ast.Ident{Name: t.Name, Obj: receiverTypeObj}},
 				},
 			},
 		},
@@ -556,6 +576,14 @@ func buildTag(t *Field) (tag *ast.BasicLit) {
 		for _, v := range t.table.PrimaryKeys {
 			if v == t.RawName {
 				gormTags = append(gormTags, "primaryKey")
+			}
+		}
+		for _, index := range t.indexes {
+			for k, v := range index.Fields {
+				if v != t.RawName {
+					continue
+				}
+				gormTags = append(gormTags, fmt.Sprintf("%s:%s,priority:%d", index.Type.Name(), index.RawName, k+1))
 			}
 		}
 		tags = append(tags, fmt.Sprintf(`gorm:"%s"`, strings.Join(gormTags, ";")))
